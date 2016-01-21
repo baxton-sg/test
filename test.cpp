@@ -1,94 +1,156 @@
+
+
 import os
 import sys
 import csv
 import numpy as np
-import matplotlib
+import scipy as sp
+from scipy.cluster.vq import vq, kmeans, whiten
+import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
 
-matplotlib.use('TkAgg')
-
-import matplotlib.pyplot as plt
-#import dicom 
 from dicom_wr import DICOM
+from utils_wr import UTILS
 
 
+
+utils = UTILS()
 
 
 SEP = os.path.sep
 
-
-FNAME = "positions.csv"
-HEADER = "CASE,SAX,FILE,B_TIP,T_TIP,LEFT,RIGHT,TOP,BOTTOM"
-DATA = {}
-STOP = False
-START = None
-PROCESSED = set()
-
-
-dicom = None
-
-
-file_idx = 0
-files_num = 0
 dir = ""
 fnames = None
-fig = None
-img_obj = None
-
+files_num = 0
 
 buffers = {}
 
+POSITIONS = {}
 
 
-
-def dump(event):
-    global STOP
-
-    print "Dumping..."
-    with open(FNAME, "a+") as fout:
-        for k, v in DATA.items():
-            fout.write("%s\n" % v)
-
-    STOP = True
+NOSHOW = False
+EPOCHES = 2
+MEAN_MUL = 4.
+FRAME_SIZE = 2
+KOEF = .5
+LOW_VAL = 10
+HIGH_VAL = 16
 
 
+def load_positions():
+    global POSITIONS
 
-
-def onclick(event):
-    #print 'button=%d, x=%d, y=%d, xdata=%f, ydata=%f'%(event.button, event.x, event.y, event.xdata, event.ydata)
-    global START
-    START = (event.xdata, event.ydata)
-    print "button pressed %s" % str(START)
-
-    circle = patches.Circle((event.xdata, event.ydata), radius=2, color='r')
-    ax = plt.subplot(111)
-    ax.add_artist(circle)
-    plt.gcf().canvas.draw()
-
-
-def onrelease(event):
-    global DATA
-
-    tokens = CUR_FILE.split(SEP)
-    top = min(START[1], event.ydata)
-    bottom = max(START[1], event.ydata)
-    left = min(START[0], event.xdata)
-    right = max(START[0], event.xdata)
-    data_str = "%s,%s,%s,%d,%d,%d,%d" % (tokens[-4], tokens[-2], tokens[-1], \
-                                             left,right,top,bottom)
-    key = "%s_%s" % (tokens[-4], tokens[-2])
-    DATA[key] = data_str
-    print "button released %s" % str((event.xdata, event.ydata,))
-
-    circle = patches.Circle((event.xdata, event.ydata), radius=2, color='r')
-    ax = plt.subplot(111)
-    ax.add_artist(circle)
-    plt.gcf().canvas.draw()
+    with open('positions.csv', "r") as fin:
+        g = csv.reader(fin, delimiter=',')
+        for tokens in g:
+            #    0    1      2     3      4    5       6
+            # case, sax, fname, left, right, top, bottom
+            key = "%s%sstudy%s%s" % (tokens[0], SEP, SEP, tokens[1])
+            pos = ( int(tokens[5]), int(tokens[6]), int(tokens[3]), int(tokens[4]), 0 )
+            POSITIONS[key] = pos
 
 
 
 
+def area_of_intersection(t1, b1, l1, r1,  t2, b2, l2, r2):
+    return max(0, min(r1, r2) - max(l1, l2)) * max(0, min(b1, b2) - max(t1, t2))
+
+def area(t, b, l, r):
+    return (b - t) * (r - l)
+
+
+
+
+def F1(p, r):
+    return 2. * (p * r) / float(p + r)
+
+
+
+def detect_rectangle(buffer, start_r, start_c, visited):
+    R = buffer.shape[0]
+    C = buffer.shape[1]
+
+    top = start_r
+    bottom = top
+
+    left = start_c
+    right = left
+    
+    S = 1
+
+    key = (start_r, start_c)
+    Q = [key]
+
+    while 0 < len(Q):
+        key = Q.pop()
+        visited.add(key)
+
+        # top
+        if 0 < key[0]:
+           r = key[0] - 1
+           c = key[1]
+           if 0 < buffer[r,c]:
+               k = (r,c)
+               if not k in visited:
+                   S += 1
+                   visited.add(k)
+                   Q.append(k)
+
+                   if top > r:
+                       top = r
+                   if bottom < r:
+                       bottom = r
+ 
+        # bottom
+        if R > key[0] + 1:
+           r = key[0] + 1
+           c = key[1]
+           if 0 < buffer[r,c]:
+               k = (r,c)
+               if not k in visited:
+                   S += 1
+                   visited.add(k)
+                   Q.append(k)
+
+                   if top > r:
+                       top = r
+                   if bottom < r:
+                       bottom = r
+
+        # left
+        if 0 < key[1]:
+           r = key[0]
+           c = key[1] - 1
+           if 0 < buffer[r,c]:
+               k = (r,c)
+               if not k in visited:
+                   S += 1
+                   visited.add(k)
+                   Q.append(k)
+
+                   if left > c:
+                       left = c
+                   if right < c:
+                       right = c
+ 
+        # right
+        if C > key[1] + 1:
+           r = key[0]
+           c = key[1] + 1
+           if 0 < buffer[r,c]:
+               k = (r,c)
+               if not k in visited:
+                   S += 1
+                   visited.add(k)
+                   Q.append(k)
+
+                   if left > c:
+                       left = c
+                   if right < c:
+                       right = c
+ 
+    return top, bottom, left, right, S
 
 
 
@@ -96,106 +158,312 @@ def onrelease(event):
 
 
 
-fig = plt.figure()
-ax = fig.add_subplot(111)
+def get_rectangles(buffer):
+    rects = []
+    visited = set()
 
-def add_frame():
-    global file_idx, img_obj, buffers
+    R = buffer.shape[0]
+    C = buffer.shape[1]
 
-    img_buffer = buffers[file_idx]
+    for r in range(R):
+        for c in range(C):
+            if 0 == buffer[r,c]:
+                continue
 
-    if img_obj == None:
-        img_obj = plt.imshow(img_buffer)
-    else:
-        img_obj.set_data(img_buffer)
+            key = (r,c)
+            if key in visited:
+                continue
 
-    file_idx += 1
-    if file_idx == files_num:
-        file_idx = 0
+            top, bottom, left, right, S = detect_rectangle(buffer, r, c, visited)
+            rects.append((top, bottom, left, right, S))
 
-    fig.canvas.draw()
-    fig.canvas.manager.window.after(100, add_frame)
-
-
-
-
-def main():
-    global dir, fnames, fig, files_num, buffers, dicom, img_obj
-    global CUR_FILE, PROCESSED
-
-    PATH_BASE  = ".." + SEP
-    PATH_DATA  = PATH_BASE + "data" + SEP + "train" + SEP
-    PATH_STUDY = "study" + SEP
-
-    if os.path.exists(FNAME):
-        with open(FNAME, "r") as fin:
-            g = csv.reader(fin)
-            for tokens in g:
-                PROCESSED.add(tokens[2])
-                #print tokens[2]
-
-    file_names = []
-
-    for d1 in [d for d in os.listdir(PATH_DATA) if not d.startswith(".")]:
-        path = PATH_DATA + d1 + SEP + PATH_STUDY
-        for d2 in [d for d in os.listdir(path) if not d.startswith(".")]:
-            path2 = path + d2 + SEP
-            files = [f for f in os.listdir(path2) if not f.startswith(".") and "dcm" in f]
-            if len(files):
-                #print path2 + files[0]
-                if not files[0] in PROCESSED:
-                    file_names.append(path2 + files[0])
-
-    sh2D = None
-    sh3D = None
+    return rects
 
 
-    cnt = 0
-
-    for f in file_names:
-        CUR_FILE = f
-        cnt += 1
-        print ":", CUR_FILE, cnt, "out of", len(file_names)
-
-        tokens = f.split(SEP)
-        dir = SEP.join(tokens[:-1]) + SEP
 
 
-        fnames = [f for f in os.listdir(dir) if "dcm" in f and not f.startswith('.')]
-        files_num = len(fnames)
+def process_and_save(): 
+    global dir, fnames, files_num, buffers
 
-        buffers.clear()
-        for i, f in enumerate(fnames):
-            if i not in buffers:
-                dicom = DICOM()
-                dicom.verbose(0)
+    path_base = "..%sdata%s" % (SEP, SEP)
 
-                dicom.fromfile(dir + f)
-                buffers[i] = dicom.img_buffer()
+    dicom.VERBOSE = False
 
-                dicom.free()
-                dicom = None
+    for d in [d for d in os.listdir(path_base) if not d.startswith(".")]:
+        path1 = path_base + d + "%sstudy%s" % (SEP, SEP)
+        for d2 in [d for d in os.listdir(path1) if not d.startswith(".")]:
+            path_final = path1 + d2 + SEP
+            dir = path_final
+            
 
-        img_obj = None
+            fnames = [f for f in os.listdir(dir) if "dcm" in f and not f.startswith('.')]
+            files_num = len(fnames)
+
+            buffers.clear()
+
+
+            fig = process(ret=True)
+
+            tokens = dir.split(SEP)
+
+            fname = "..%simgs%s%s_%s_%s.png" % (SEP, SEP, tokens[-4], tokens[-2], tokens[-1])
+            fig.savefig(fname)
+   
+
+
+
+
+
+
+def process(ret=False): 
+    global dir, fnames, files_num, buffers
+
+
+    fnames = [f for f in os.listdir(dir) if "dcm" in f and not f.startswith('.')]
+    files_num = len(fnames)
+
+    keys = []
+    for i, f in enumerate(fnames):
+        key = dir + f
+        keys.append(key)
+        if key not in buffers:
+            dicom = DICOM()
+            dicom.verbose(False)
+            dicom.fromfile(key)
+            b = dicom.img_buffer()
+            buffers[key] = b
+            dicom.free()
+
+   
+     
+
+
+    prev = buffers[keys[0]]
+    shape2D = prev.shape
+    shape3D = (shape2D[0], shape2D[1], 1)
+
+#    freq = np.zeros(shape2D, dtype=float)
+#    #freq = np.ones(shape2D, dtype=float)
+#
+#    cnt = 0
+#    thr = 1
+#
+#    for i in range(1, files_num):
+#        cnt += 1
+#        if cnt != thr:
+#            continue
+#        cnt = 0
+#        curr = buffers[keys[i]]
+#        #
+#        tmp = (prev - curr) ** 2
+#        mv = np.mean(tmp)
+#        std = np.std(tmp)
+#        zz = tmp - mv
+#        tmp[zz < mv + std*MEAN_MUL] = 0
+#        freq[tmp != 0] += 1
+#        #
+#        prev = curr
+#
+#     
+#
+#    freq[freq < 3] = 0
+#    freq[freq > 6] = 0
+
+    frames = np.zeros((files_num, shape2D[0], shape2D[1]), dtype=np.float64)
+    for f in range(files_num):
+        frames[f,:,:] = buffers[keys[f]]
+    freq = utils.get_frequencies(frames, MEAN_MUL, LOW_VAL, HIGH_VAL)
+    
+    freq = utils.filter(freq, FRAME_SIZE, KOEF)        
+
+    shape2D = (freq.shape[0], freq.shape[1])
+    shape3D = (freq.shape[0], freq.shape[1], 1)
+     
+
+#    for e in range(EPOCHES):
+#        R = shape2D[0]
+#        C = shape2D[1]
+#        S = FRAME_SIZE
+#        K = KOEF
+#        res = np.zeros(shape2D, dtype=float)
+#        for r in range(R):
+#            if (r + S) >= R:
+#                continue
+#            for c in range(C):
+#                if (c + S) >= C:
+#                    continue
+#                tmp = freq[r : r + S, c : c + S]
+#                #mv = np.mean(tmp)
+#                mv = tmp.sum() / (S**2)
+#    
+#                if K > mv:
+#                    freq[r+S/2,c+S/2] = 0
+#                else:
+#                    freq[r+S/2,c+S/2] = tmp.mean()
+#   
+#    freq[:, :10] = 0
+#    freq[:, -10:] = 0
+#    freq[:10, :] = 0
+#    freq[-10:, :] = 0
+
+
+    rects = get_rectangles(freq)
+
+
+    freq = freq.reshape(shape3D)
+
+    
+    tokens = dir.split(SEP)
+    #print tokens
+    key = "%s%sstudy%s%s" % (tokens[-4], SEP, SEP, tokens[-2])
+    pos = POSITIONS[key] if key in POSITIONS else None
+    if None != pos:
+        SP = area(pos[0], pos[1], pos[2], pos[3])
+        #print "real", pos
+
+
+
+    if not NOSHOW:
         plt.clf()
-        fig = plt.figure()
-        #ax = fig.add_subplot(111)
-        cid1 = fig.canvas.mpl_connect("button_press_event", onclick)
-        cid2 = fig.canvas.mpl_connect("button_release_event", onrelease)
-        cid3 = fig.canvas.mpl_connect("key_press_event", dump)
-        #win = fig.canvas.manager.window
-        fig.canvas.manager.window.after(100, add_frame)
-        plt.show()
-        
-        fig.canvas.mpl_disconnect(cid1)
-        fig.canvas.mpl_disconnect(cid2)
-        fig.canvas.mpl_disconnect(cid3)
-        fig.clear()
-        
-        if STOP:
-            break
+        ax = plt.subplot(121)
+        plt.imshow(buffers[keys[0]]*100)
+ 
+        max_r = None
+        max_P = 0
+       
+        for r in rects:
+            SR = area(r[0], r[1], r[2], r[3])
+            SI = 0
+            if None != pos:
+                SI = area_of_intersection(pos[0], pos[1], pos[2], pos[3],  r[0], r[1], r[2], r[3])
 
-    dump(None)
+            if 0 == SI:
+                P = 0
+            else:
+                P = F1(float(SI) / SP, float(SI) / SR)
+
+            if P > max_P:
+                max_P = P
+                max_r = r
+
+            ax.add_patch(patches.Rectangle((r[2], r[0]), r[3] - r[2], r[1] - r[0], fill=False, linewidth=2, edgecolor='red'))
+
+            print "rect", P, str(r)
+
+        if None != pos:
+            ax.add_patch(patches.Rectangle((pos[2], pos[0]), pos[3] - pos[2], pos[1] - pos[0], fill=False, linewidth=2, edgecolor='green'))
+
+
+        print "MAX:", max_P, max_r
+        ax.add_patch(patches.Rectangle((max_r[2], max_r[0]), max_r[3] - max_r[2], max_r[1] - max_r[0], fill=False, linewidth=2, edgecolor='yellow'))
+
+
+        plt.subplot(122)
+        plt.imshow(np.concatenate((freq,freq,freq), axis=2))
+
+        if not ret:
+            plt.show()
+        else:
+            return plt.gcf()
+
+    else:
+        max_P = 0
+ 
+        for r in rects:
+            SR = area(r[0], r[1], r[2], r[3])
+            SI = area_of_intersection(pos[0], pos[1], pos[2], pos[3],  r[0], r[1], r[2], r[3])
+
+            if 0 == SI:
+                P = 0
+            else:
+                P = F1(float(SI) / SP, float(SI) / SR)
+
+            if max_P < P:
+                max_P = P
+
+        return max_P
+
+
+
+def run_many():
+    global dir, NOSHOW, EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF
+
+    NOSHOW = True
+
+    path_base = "..%sdata%strain%s" % (SEP, SEP, SEP)
+
+    md = .5
+
+    max_res = 0
+    max_data = None
+
+    
+
+    for EPOCHES in range(0, 53):
+        MEAN_MUL = 1.
+        for t1 in range(5):
+            MEAN_MUL *= 2
+            for FRAME_SIZE in range(2, 16):
+                KOEF = 1.
+                for t2 in range(5):
+                    KOEF *= 2
+
+                    res = 0.
+                    cnt = 0
+                    for d in [d for d in os.listdir(path_base) if not d.startswith(".")][0]:
+                        path1 = path_base + d + "%sstudy%s" % (SEP, SEP)
+                        for d2 in [d for d in os.listdir(path1) if not d.startswith(".")]:
+                            path_final = path1 + d2 + SEP
+                            dir = path_final
+
+                            res += process()
+                            cnt += 1
+
+                    data = (EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF)
+                    res /= cnt
+                    print res, str(data)
+
+                    if max_res < res:
+                        max_res = res
+                        max_data = data
+    print "MAX:", max_res, max_data
+
+
+
+def main(): 
+    global dir, fnames, files_num, buffers
+
+    dir = sys.argv[1]
+
+    if 2 < len(sys.argv):
+        global NOSHOW, EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF
+        NOSHOW = True if sys.argv[2] == "True" else False
+        EPOCHES = int(sys.argv[3])
+        MEAN_MUL = float(sys.argv[4])
+        FRAME_SIZE = int(sys.argv[5])
+        KOEF = float(sys.argv[6])
+
+    if dir == "ALL":
+        process_and_save()
+        return 0
+
+    if dir == "STAT":
+        get_stat()
+        return 0
+
+    load_positions()
+
+
+    fnames = [f for f in os.listdir(dir) if "dcm" in f and not f.startswith('.')]
+    files_num = len(fnames)
+
+
+
+    if not NOSHOW:
+        process() 
+    else:
+        print process()
+
 
 
 
@@ -203,3 +471,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+

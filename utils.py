@@ -58,7 +58,25 @@ class UTILS(object):
         return freq.reshape((rows, cols))
 
 
+    def filter(self, freq, S, K):
+        tmp = freq
+        if freq.dtype != np.float64:
+            tmp = tmp.astype(np.float64)
 
+        rows = freq.shape[0]
+        cols = freq.shape[1]
+
+        new_rows = rows - S + 1
+        new_cols = cols - S + 1
+        new_freq = np.zeros((new_rows, new_cols), dtype=np.float64)
+
+        UTILS_DLL.filter(ctypes.c_void_p(tmp.ctypes.data),
+                         ctypes.c_int(rows),
+                         ctypes.c_int(cols),
+                         ctypes.c_int(S),
+                         ctypes.c_double(K),
+                         ctypes.c_void_p(new_freq.ctypes.data))
+        return new_freq
 
 
 
@@ -94,3 +112,4 @@ def main():
 if __name__ == "__main__":
     main()
      
+

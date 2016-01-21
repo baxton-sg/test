@@ -10,6 +10,7 @@
 #include <cmath>
 #include <memory>
 #include <iostream>
+#include <algorithm>
 
 
 using namespace std;
@@ -86,7 +87,8 @@ extern "C" {
             // freq[tmp != 0] += 1
             for (int p = 0; p < frame_size; ++p) {
                 double deviation = deltas[p] - mean;
-                if (deviation >= (mean + std * MEAN_MUL)) {
+                //if (deviation >= (mean + std * MEAN_MUL)) {
+                if (deviation >= mean * MEAN_MUL) {
                     freq[p] += 1.;
                 }
             }
@@ -102,36 +104,43 @@ extern "C" {
     }
 
 
+    void filter(const double* freq, int rows, int cols, int S, double K, double* new_freq) {
+        int new_cols = cols - S + 1;
+        int new_rows = rows - S + 1;
 
-    void filter_frequencies() {
-    for e in range(EPOCHES):
-        R = shape2D[0]
-        C = shape2D[1]
-        S = FRAME_SIZE
-        K = KOEF
-        res = np.zeros(shape2D, dtype=float)
-        for r in range(R):
-            if (r + S) >= R:
-                continue
-            for c in range(C):
-                if (c + S) >= C:
-                    continue
-                tmp = freq[r : r + S, c : c + S]
-                m = np.mean(tmp)
+        double N = S * S;
+        double mv;
 
-                if K < m:
-                    res[r,c] = 100
-                else:
-                    res[r,c] = 0
+        for (int c = 0; c < new_cols; ++c) {
+            double sum = 0;
+            for (int i = 0; i < S; ++i)
+                for (int j = 0; j < S; ++j)
+                    sum += freq[i * cols + c + j]; 
 
-        beg_row = S/2
-        neg_beg_row = freq.shape[0] - (freq.shape[0] - beg_row)
-        beg_col = S/2
-        neg_beg_col = freq.shape[1] - (freq.shape[1] - beg_col)
-        freq[beg_row :, beg_col :] = res[:-neg_beg_row, :-neg_beg_col]
-        freq[:beg_row, :] = 0
-        freq[:, :beg_col] = 0
+            mv = sum / N;
+            if (K < mv) {
+                new_freq[c] = mv;
+            }
+            else {
+                new_freq[c] = 0;
+            }
+
+            for (int r = 1; r < new_rows; ++r) {
+                for (int j = 0; j < S; ++j) {
+                    sum -= freq[(r-1) * cols + c + j];
+                    sum += freq[(r+S-1) * cols + c + j];
+                }
+                mv = sum / N;
+                if (K < mv) {
+                    new_freq[r * new_cols + c] = mv;
+                }
+                else {
+                    new_freq[r * new_cols + c] = 0;
+                }
+            }
+        }
     }
 
 
 }
+

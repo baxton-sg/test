@@ -81,14 +81,10 @@ extern "C" {
 
             double mean, std;
             get_statistics(deltas.get(), frame_size, &mean, nullptr, &std, nullptr);
-            std = sqrt(std);
 
-            // tmp[zz < mv + std*MEAN_MUL] = 0
-            // freq[tmp != 0] += 1
             for (int p = 0; p < frame_size; ++p) {
                 double deviation = deltas[p] - mean;
-                //if (deviation >= (mean + std * MEAN_MUL)) {
-                if (deviation >= mean * MEAN_MUL) {
+                if (mean * MEAN_MUL <= deviation /*&& deviation < mean * (MEAN_MUL+3)*/) {
                     freq[p] += 1.;
                 }
             }
@@ -103,19 +99,61 @@ extern "C" {
         }
     }
 
+    void get_frequencies2(const double* frames, 
+                         int rows, 
+                         int cols, 
+                         int frames_num, 
+                         double* freq,
+                         double MEAN_MUL,
+                         double LOW_VAL,
+                         double HIGH_VAL
+                         ) {
+        size_t frame_size = rows * cols;
+        const double* prev = frames;
 
-    void filter(const double* freq, int rows, int cols, int S, double K, double* new_freq) {
-        int new_cols = cols - S + 1;
-        int new_rows = rows - S + 1;
+        unique_ptr<double[]> deltas(new double[frame_size]);
 
-        double N = S * S;
+        for (int f = 1; f < frames_num; ++f) {
+            const double* curr = &prev[frame_size];
+
+            // get delta
+            for (int p = 0; p < frame_size; ++p) {
+                double d = sqrt((prev[p] - curr[p]) * (prev[p] - curr[p]));
+                if (MEAN_MUL <= (d / prev[p])) {
+                    deltas[p] = 1.;
+                }
+                else {
+                    deltas[p] = 0.;
+                }
+            }
+
+            for (int p = 0; p < frame_size; ++p) {
+                freq[p] += deltas[p];
+            }
+            
+            // prepare for the next iteration 
+            prev = curr;  
+        }
+
+        for (int p = 0; p < frame_size; ++p) {
+            if (freq[p] < LOW_VAL || HIGH_VAL < freq[p])
+                freq[p] = 0;
+        }
+    }
+
+
+    void filter(const double* freq, int rows, int cols, int F, int S, double K, double* new_freq) {
+        int new_cols = (cols - F) / S + 1;
+        int new_rows = (rows - F) / S + 1;
+
+        double N = F * F;
         double mv;
 
         for (int c = 0; c < new_cols; ++c) {
             double sum = 0;
-            for (int i = 0; i < S; ++i)
-                for (int j = 0; j < S; ++j)
-                    sum += freq[i * cols + c + j]; 
+            for (int i = 0; i < F; ++i)
+                for (int j = 0; j < F; ++j)
+                    sum += freq[i * cols + c*S + j]; 
 
             mv = sum / N;
             if (K < mv) {
@@ -126,9 +164,11 @@ extern "C" {
             }
 
             for (int r = 1; r < new_rows; ++r) {
-                for (int j = 0; j < S; ++j) {
-                    sum -= freq[(r-1) * cols + c + j];
-                    sum += freq[(r+S-1) * cols + c + j];
+                for (int j = 0; j < F; ++j) {
+                    for (int i = 0; i < S; ++i) {
+                        sum -= freq[(r*S-(i+1)) * cols + c*S + j];
+                        sum += freq[(r*S+(F-(i+1))) * cols + c*S + j];
+                    }
                 }
                 mv = sum / N;
                 if (K < mv) {
@@ -143,4 +183,5 @@ extern "C" {
 
 
 }
+
 

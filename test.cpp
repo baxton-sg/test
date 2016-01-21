@@ -4,10 +4,6 @@ import os
 import sys
 import csv
 import numpy as np
-import scipy as sp
-from scipy.cluster.vq import vq, kmeans, whiten
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
 
 
 from dicom_wr import DICOM
@@ -29,13 +25,20 @@ buffers = {}
 POSITIONS = {}
 
 
+# params to optimize
 NOSHOW = False
-EPOCHES = 2
-MEAN_MUL = 4.
-FRAME_SIZE = 2
-KOEF = .5
-LOW_VAL = 10
-HIGH_VAL = 16
+EPOCHES = 1
+MEAN_MUL = 2
+FRAME_SIZE = 8
+STRIDE = 1
+KOEF = 4
+LOW_VAL = 8
+HIGH_VAL = 32
+CUTOFF = 2.6
+
+
+
+
 
 
 def load_positions():
@@ -182,45 +185,16 @@ def get_rectangles(buffer):
 
 
 
-def process_and_save(): 
-    global dir, fnames, files_num, buffers
 
-    path_base = "..%sdata%s" % (SEP, SEP)
-
-    dicom.VERBOSE = False
-
-    for d in [d for d in os.listdir(path_base) if not d.startswith(".")]:
-        path1 = path_base + d + "%sstudy%s" % (SEP, SEP)
-        for d2 in [d for d in os.listdir(path1) if not d.startswith(".")]:
-            path_final = path1 + d2 + SEP
-            dir = path_final
-            
-
-            fnames = [f for f in os.listdir(dir) if "dcm" in f and not f.startswith('.')]
-            files_num = len(fnames)
-
-            buffers.clear()
-
-
-            fig = process(ret=True)
-
-            tokens = dir.split(SEP)
-
-            fname = "..%simgs%s%s_%s_%s.png" % (SEP, SEP, tokens[-4], tokens[-2], tokens[-1])
-            fig.savefig(fname)
-   
-
-
-
-
-
-
-def process(ret=False): 
+def process(): 
     global dir, fnames, files_num, buffers
 
 
     fnames = [f for f in os.listdir(dir) if "dcm" in f and not f.startswith('.')]
     files_num = len(fnames)
+
+    origR = 0
+    origC = 0
 
     keys = []
     for i, f in enumerate(fnames):
@@ -231,8 +205,20 @@ def process(ret=False):
             dicom.verbose(False)
             dicom.fromfile(key)
             b = dicom.img_buffer()
-            buffers[key] = b
+            b[:30,:]=0
+            b[-30:,:]=0
+            b[:,:30]=0
+            b[:,-30:]=0
+            mv = b.mean()
+            origR = b.shape[0]
+            origC = b.shape[1]
+            buffers[key] = utils.filter(b, 8, 2, mv/CUTOFF) 
+
             dicom.free()
+
+        else:
+            origR = buffers[keys[0]].shape[0]
+            origC = buffers[keys[0]].shape[1]
 
    
      
@@ -242,228 +228,128 @@ def process(ret=False):
     shape2D = prev.shape
     shape3D = (shape2D[0], shape2D[1], 1)
 
-#    freq = np.zeros(shape2D, dtype=float)
-#    #freq = np.ones(shape2D, dtype=float)
-#
-#    cnt = 0
-#    thr = 1
-#
-#    for i in range(1, files_num):
-#        cnt += 1
-#        if cnt != thr:
-#            continue
-#        cnt = 0
-#        curr = buffers[keys[i]]
-#        #
-#        tmp = (prev - curr) ** 2
-#        mv = np.mean(tmp)
-#        std = np.std(tmp)
-#        zz = tmp - mv
-#        tmp[zz < mv + std*MEAN_MUL] = 0
-#        freq[tmp != 0] += 1
-#        #
-#        prev = curr
-#
-#     
-#
-#    freq[freq < 3] = 0
-#    freq[freq > 6] = 0
+    newR = shape2D[0]
+    newC = shape2D[1]
 
-    frames = np.zeros((files_num, shape2D[0], shape2D[1]), dtype=np.float64)
-    for f in range(files_num):
-        frames[f,:,:] = buffers[keys[f]]
+    step = 1
+    frames = np.zeros((files_num / step, shape2D[0], shape2D[1]), dtype=np.float64)
+    for f in range(0, files_num, step):
+        frames[f/step,:,:] = buffers[keys[f]]
     freq = utils.get_frequencies(frames, MEAN_MUL, LOW_VAL, HIGH_VAL)
     
-    freq = utils.filter(freq, FRAME_SIZE, KOEF)        
+
+    for e in range(EPOCHES):    
+        freq = utils.filter(freq, FRAME_SIZE, STRIDE, KOEF)        
+
+    KH = float(freq.shape[0]) / shape2D[0]
+    KW = float(freq.shape[1]) / shape2D[1]
 
     shape2D = (freq.shape[0], freq.shape[1])
     shape3D = (freq.shape[0], freq.shape[1], 1)
      
 
-#    for e in range(EPOCHES):
-#        R = shape2D[0]
-#        C = shape2D[1]
-#        S = FRAME_SIZE
-#        K = KOEF
-#        res = np.zeros(shape2D, dtype=float)
-#        for r in range(R):
-#            if (r + S) >= R:
-#                continue
-#            for c in range(C):
-#                if (c + S) >= C:
-#                    continue
-#                tmp = freq[r : r + S, c : c + S]
-#                #mv = np.mean(tmp)
-#                mv = tmp.sum() / (S**2)
-#    
-#                if K > mv:
-#                    freq[r+S/2,c+S/2] = 0
-#                else:
-#                    freq[r+S/2,c+S/2] = tmp.mean()
-#   
-#    freq[:, :10] = 0
-#    freq[:, -10:] = 0
-#    freq[:10, :] = 0
-#    freq[-10:, :] = 0
-
-
     rects = get_rectangles(freq)
 
 
-    freq = freq.reshape(shape3D)
-
     
     tokens = dir.split(SEP)
-    #print tokens
     key = "%s%sstudy%s%s" % (tokens[-4], SEP, SEP, tokens[-2])
     pos = POSITIONS[key] if key in POSITIONS else None
     if None != pos:
+        PKH = float(newR) / origR
+        PKW = float(newC) / origC
+        pos = (pos[0]*PKH, pos[1]*PKH, pos[2]*PKW, pos[3]*PKW)
         SP = area(pos[0], pos[1], pos[2], pos[3])
-        #print "real", pos
+#        print pos
 
 
 
-    if not NOSHOW:
-        plt.clf()
-        ax = plt.subplot(121)
-        plt.imshow(buffers[keys[0]]*100)
- 
-        max_r = None
-        max_P = 0
+    max_r = None
+    max_P = 0
        
-        for r in rects:
-            SR = area(r[0], r[1], r[2], r[3])
-            SI = 0
-            if None != pos:
-                SI = area_of_intersection(pos[0], pos[1], pos[2], pos[3],  r[0], r[1], r[2], r[3])
-
-            if 0 == SI:
-                P = 0
-            else:
-                P = F1(float(SI) / SP, float(SI) / SR)
-
-            if P > max_P:
-                max_P = P
-                max_r = r
-
-            ax.add_patch(patches.Rectangle((r[2], r[0]), r[3] - r[2], r[1] - r[0], fill=False, linewidth=2, edgecolor='red'))
-
-            print "rect", P, str(r)
-
+    for r_row in rects:
+        r = (r_row[0] / KH, r_row[1] / KH, r_row[2] / KW, r_row[3] / KW)
+        SR = area(r[0], r[1], r[2], r[3])
+        SI = 0
         if None != pos:
-            ax.add_patch(patches.Rectangle((pos[2], pos[0]), pos[3] - pos[2], pos[1] - pos[0], fill=False, linewidth=2, edgecolor='green'))
-
-
-        print "MAX:", max_P, max_r
-        ax.add_patch(patches.Rectangle((max_r[2], max_r[0]), max_r[3] - max_r[2], max_r[1] - max_r[0], fill=False, linewidth=2, edgecolor='yellow'))
-
-
-        plt.subplot(122)
-        plt.imshow(np.concatenate((freq,freq,freq), axis=2))
-
-        if not ret:
-            plt.show()
-        else:
-            return plt.gcf()
-
-    else:
-        max_P = 0
- 
-        for r in rects:
-            SR = area(r[0], r[1], r[2], r[3])
             SI = area_of_intersection(pos[0], pos[1], pos[2], pos[3],  r[0], r[1], r[2], r[3])
 
-            if 0 == SI:
-                P = 0
-            else:
-                P = F1(float(SI) / SP, float(SI) / SR)
+        if 0 == SI:
+            P = 0
+        else:
+            P = F1(float(SI) / SP, float(SI) / SR)
 
-            if max_P < P:
-                max_P = P
+#        print P, r
 
-        return max_P
+        if P > max_P:
+            max_P = P
+            max_r = r
+
+
+    return max_P
 
 
 
-def run_many():
-    global dir, NOSHOW, EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF
 
-    NOSHOW = True
+
+
+def cost():
+    global dir   #, NOSHOW, EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF, LOW_VAL, HIGH_VAL
 
     path_base = "..%sdata%strain%s" % (SEP, SEP, SEP)
 
-    md = .5
-
     max_res = 0
     max_data = None
-
     
 
-    for EPOCHES in range(0, 53):
-        MEAN_MUL = 1.
-        for t1 in range(5):
-            MEAN_MUL *= 2
-            for FRAME_SIZE in range(2, 16):
-                KOEF = 1.
-                for t2 in range(5):
-                    KOEF *= 2
+    res = 0.
+    cnt = 0
+    for d in [d for d in os.listdir(path_base) if not d.startswith(".")][0]:
+        path1 = path_base + d + "%sstudy%s" % (SEP, SEP)
+        for d2 in [d for d in os.listdir(path1) if not d.startswith(".")]:
+            path_final = path1 + d2 + SEP
+            dir = path_final
 
-                    res = 0.
-                    cnt = 0
-                    for d in [d for d in os.listdir(path_base) if not d.startswith(".")][0]:
-                        path1 = path_base + d + "%sstudy%s" % (SEP, SEP)
-                        for d2 in [d for d in os.listdir(path1) if not d.startswith(".")]:
-                            path_final = path1 + d2 + SEP
-                            dir = path_final
+            res += process()
+            cnt += 1
 
-                            res += process()
-                            cnt += 1
+    #data = (EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF, LOW_VAL, HIGH_VAL)
+    res /= cnt
+    #print res, str(data), "(processed %d scans)" % cnt
 
-                    data = (EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF)
-                    res /= cnt
-                    print res, str(data)
+    return res
 
-                    if max_res < res:
-                        max_res = res
-                        max_data = data
-    print "MAX:", max_res, max_data
+
+
 
 
 
 def main(): 
-    global dir, fnames, files_num, buffers
-
-    dir = sys.argv[1]
-
-    if 2 < len(sys.argv):
-        global NOSHOW, EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF
-        NOSHOW = True if sys.argv[2] == "True" else False
-        EPOCHES = int(sys.argv[3])
-        MEAN_MUL = float(sys.argv[4])
-        FRAME_SIZE = int(sys.argv[5])
-        KOEF = float(sys.argv[6])
-
-    if dir == "ALL":
-        process_and_save()
-        return 0
-
-    if dir == "STAT":
-        get_stat()
-        return 0
+    global CUTOFF
 
     load_positions()
 
+    data = (EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF, LOW_VAL, HIGH_VAL, CUTOFF)
+    E = cost()
+    print E, data
 
-    fnames = [f for f in os.listdir(dir) if "dcm" in f and not f.startswith('.')]
-    files_num = len(fnames)
+    e = 0.00001
+    a = 0.01
+   
+    for i in range(1):
+        prev_cutoff = CUTOFF
+#        CUTOFF += e
+        newE = cost()
+        print newE, CUTOFF
+        CUTOFF = prev_cutoff
+        g = (newE - E) / e
 
-
-
-    if not NOSHOW:
-        process() 
-    else:
-        print process()
-
+        CUTOFF = CUTOFF - a * g
+ 
+        E = cost()
+        data = (EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF, LOW_VAL, HIGH_VAL, CUTOFF)
+        print E, data
+                
 
 
 
@@ -471,5 +357,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 

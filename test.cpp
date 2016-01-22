@@ -20,18 +20,24 @@ dir = ""
 fnames = None
 files_num = 0
 
-buffers = {}
 
+MAX_INDICES = 500
+MAX_ITERS = 100
+
+
+INDICES = None
+buffers = {}
+ORIGRCS = {}
 POSITIONS = {}
 
 
 # params to optimize
 NOSHOW = False
 EPOCHES = 1
-MEAN_MUL = 2
-FRAME_SIZE = 8
+MEAN_MUL = 4
+FRAME_SIZE = 5
 STRIDE = 1
-KOEF = 4
+KOEF = .5
 LOW_VAL = 8
 HIGH_VAL = 32
 CUTOFF = 2.6
@@ -42,7 +48,7 @@ CUTOFF = 2.6
 
 
 def load_positions():
-    global POSITIONS
+    global POSITIONS, INDICES
 
     with open('positions.csv', "r") as fin:
         g = csv.reader(fin, delimiter=',')
@@ -52,6 +58,10 @@ def load_positions():
             key = "%s%sstudy%s%s" % (tokens[0], SEP, SEP, tokens[1])
             pos = ( int(tokens[5]), int(tokens[6]), int(tokens[3]), int(tokens[4]), 0 )
             POSITIONS[key] = pos
+
+        INDICES = range(len(POSITIONS.keys()))
+        np.random.shuffle(INDICES)
+        INDICES = INDICES[:MAX_INDICES]
 
 
 
@@ -212,13 +222,14 @@ def process():
             mv = b.mean()
             origR = b.shape[0]
             origC = b.shape[1]
+            ORIGRCS[key] = (origR, origC)
             buffers[key] = utils.filter(b, 8, 2, mv/CUTOFF) 
 
             dicom.free()
 
         else:
-            origR = buffers[keys[0]].shape[0]
-            origC = buffers[keys[0]].shape[1]
+            origR = ORIGRCS[key][0]
+            origC = ORIGRCS[key][1]
 
    
      
@@ -300,32 +311,37 @@ def cost():
 
     max_res = 0
     max_data = None
+
+
+    keys = []
+    for i in INDICES:
+        keys.append(POSITIONS.keys()[i])
     
 
     res = 0.
-    cnt = 0
-    for d in [d for d in os.listdir(path_base) if not d.startswith(".")][0]:
-        path1 = path_base + d + "%sstudy%s" % (SEP, SEP)
-        for d2 in [d for d in os.listdir(path1) if not d.startswith(".")]:
-            path_final = path1 + d2 + SEP
+    cnt = 0.
+    #for d in [d for d in os.listdir(path_base) if not d.startswith(".")]:
+    #    path1 = path_base + d + "%sstudy%s" % (SEP, SEP)
+    #    for d2 in [d for d in os.listdir(path1) if not d.startswith(".")]:
+    #        path_final = path1 + d2 + SEP
+
+    for k in keys:
+        path_final = os.path.join(path_base, k) + os.path.sep
+        if 1:
             dir = path_final
 
             res += process()
-            cnt += 1
+            cnt += 1.
 
-    #data = (EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF, LOW_VAL, HIGH_VAL)
     res /= cnt
-    #print res, str(data), "(processed %d scans)" % cnt
 
     return res
 
 
 
 
-
-
 def main(): 
-    global CUTOFF
+    global MEAN_MUL, FRAME_SIZE, KOEF, LOW_VAL, HIGH_VAL
 
     load_positions()
 
@@ -333,30 +349,75 @@ def main():
     E = cost()
     print E, data
 
-    e = 0.00001
-    a = 0.01
-   
-    for i in range(1):
-        prev_cutoff = CUTOFF
-#        CUTOFF += e
-        newE = cost()
-        print newE, CUTOFF
-        CUTOFF = prev_cutoff
-        g = (newE - E) / e
+    maxE = E
+    maxData = data
 
-        CUTOFF = CUTOFF - a * g
- 
+    g = [0] * 5
+
+    e = 0.1
+    a = 0.1
+   
+    for i in range(MAX_ITERS):
+
+        prev = MEAN_MUL
+        MEAN_MUL += e
+        newE = cost()
+        MEAN_MUL = prev
+        g[0] = (newE - E) / e
+
+        prev = FRAME_SIZE
+        FRAME_SIZE += 1
+        newE = cost()
+        FRAME_SIZE = prev
+        g[1] = (newE - E) / e
+
+        prev = KOEF
+        KOEF += e
+        newE = cost()
+        KOEF = prev
+        g[2] = (newE - E) / e
+
+        prev = LOW_VAL
+        LOW_VAL *= 1.3
+        newE = cost()
+        LOW_VAL = prev
+        g[3] = (newE - E) / e
+
+        prev = HIGH_VAL
+        HIGH_VAL *= 1.3
+        newE = cost()
+        HIGH_VAL= prev
+        g[4] = (newE - E) / e
+        
+        #print g
+
+        if 0 == np.sum(g):
+            print "grad is zero"
+            break
+
+        # climing up
+        MEAN_MUL = MEAN_MUL + a * g[0]
+        FRAME_SIZE = FRAME_SIZE + (-1 if 0 > g[1] else 1 if g[1] > 0 else 0)
+        KOEF = KOEF + a * g[2]
+        LOW_VAL = LOW_VAL + 2 * g[3]
+        HIGH_VAL = HIGH_VAL + 2 * g[4]
+
         E = cost()
         data = (EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF, LOW_VAL, HIGH_VAL, CUTOFF)
         print E, data
+
+        if E > maxE:
+            maxE = E
+            maxData = data
                 
 
-
+    print "MAX:", maxE, maxData
 
 
 
 if __name__ == "__main__":
     main()
+
 
 
 

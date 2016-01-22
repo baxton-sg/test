@@ -14,6 +14,7 @@ from utils_wr import UTILS
 utils = UTILS()
 
 
+PATH_BASE = os.path.join("..", "data", "train")
 SEP = os.path.sep
 
 dir = ""
@@ -22,7 +23,7 @@ files_num = 0
 
 
 MAX_INDICES = 500
-MAX_ITERS = 100
+MAX_ITERS = 150
 
 
 INDICES = None
@@ -39,7 +40,7 @@ FRAME_SIZE = 5
 STRIDE = 1
 KOEF = .5
 LOW_VAL = 8
-HIGH_VAL = 32
+HIGH_VAL = 12
 CUTOFF = 2.6
 
 
@@ -55,7 +56,12 @@ def load_positions():
         for tokens in g:
             #    0    1      2     3      4    5       6
             # case, sax, fname, left, right, top, bottom
-            key = "%s%sstudy%s%s" % (tokens[0], SEP, SEP, tokens[1])
+            key = os.path.join(tokens[0], "study", tokens[1])
+
+            path = os.path.join(PATH_BASE, key)
+            if not os.path.exists(path):
+                continue
+
             pos = ( int(tokens[5]), int(tokens[6]), int(tokens[3]), int(tokens[4]), 0 )
             POSITIONS[key] = pos
 
@@ -172,6 +178,8 @@ def detect_rectangle(buffer, start_r, start_c, visited):
 
 
 def get_rectangles(buffer):
+    return utils.get_rectangles(buffer)
+
     rects = []
     visited = set()
 
@@ -343,9 +351,19 @@ def cost():
 def main(): 
     global MEAN_MUL, FRAME_SIZE, KOEF, LOW_VAL, HIGH_VAL
 
+    np.random.seed()
+
     load_positions()
 
+    MEAN_MUL = np.random.randint(0, 6)
+    FRAME_SIZE = np.random.randint(2, 9)
+    KOEF = np.random.rand()
+    LOW_VAL = np.random.randint(12)
+    HIGH_VAL = np.random.randint(4,32)
+
     data = (EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF, LOW_VAL, HIGH_VAL, CUTOFF)
+    print data
+
     E = cost()
     print E, data
 
@@ -354,8 +372,8 @@ def main():
 
     g = [0] * 5
 
-    e = 0.1
-    a = 0.1
+    e = 0.3
+    a = 0.3
    
     for i in range(MAX_ITERS):
 
@@ -372,19 +390,19 @@ def main():
         g[1] = (newE - E) / e
 
         prev = KOEF
-        KOEF += e
+        KOEF += .5
         newE = cost()
         KOEF = prev
         g[2] = (newE - E) / e
 
         prev = LOW_VAL
-        LOW_VAL *= 1.3
+        LOW_VAL *= 1.4
         newE = cost()
         LOW_VAL = prev
         g[3] = (newE - E) / e
 
         prev = HIGH_VAL
-        HIGH_VAL *= 1.3
+        HIGH_VAL *= 1.4
         newE = cost()
         HIGH_VAL= prev
         g[4] = (newE - E) / e
@@ -398,9 +416,10 @@ def main():
         # climing up
         MEAN_MUL = MEAN_MUL + a * g[0]
         FRAME_SIZE = FRAME_SIZE + (-1 if 0 > g[1] else 1 if g[1] > 0 else 0)
+	FRAME_SIZE = FRAME_SIZE if 2 <= FRAME_SIZE else 2
         KOEF = KOEF + a * g[2]
-        LOW_VAL = LOW_VAL + 2 * g[3]
-        HIGH_VAL = HIGH_VAL + 2 * g[4]
+        LOW_VAL = LOW_VAL +  LOW_VAL * .4 * g[3]
+        HIGH_VAL = HIGH_VAL + HIGH_VAL * .4 * g[4]
 
         E = cost()
         data = (EPOCHES, MEAN_MUL, FRAME_SIZE, KOEF, LOW_VAL, HIGH_VAL, CUTOFF)
@@ -417,6 +436,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

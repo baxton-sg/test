@@ -24,22 +24,23 @@ struct POINT {
     int c;
 
     struct cmp {
-        int operator()(const POINT& k1, const POINT& k2) {
+        bool operator()(const POINT& k1, const POINT& k2) {
+            int res = 0;
             if (k1.r > k2.r) {
-                return 1;
+                res = 1;
             }
             else if (k1.r < k2.r) {
-                return -1;
+                res = -1;
             }
             else {
                 if (k1.c > k2.c) {
-                    return 1;
+                    res = 1;
                 }
                 else if (k1.c < k2.c) {
-                    return -1;
+                    res = -1;
                 }
-                return 0;
             }
+            return res > 0;
         }
     };
 };
@@ -53,7 +54,7 @@ struct RECT {
 
 
 
-void get_rectangle(const double* img, int rows, int cols, int start_r, int start_c, set<POINT>& visited, int& top, int& bottom, int& left, int& right) {
+void detect_rectangle(const double* img, int rows, int cols, int start_r, int start_c, set<POINT, POINT::cmp>& visited, int& top, int& bottom, int& left, int& right) {
     vector<POINT> Q;
     Q.reserve(10000);
 
@@ -64,19 +65,19 @@ void get_rectangle(const double* img, int rows, int cols, int start_r, int start
 
     POINT key = {start_r, start_c};
     Q.push_back(key);
-    visited.add(key);
+    visited.insert(key);
 
     while (Q.size()) {
         key = Q.back();
         Q.pop_back();
 
-        // right
-        if (cols > key.c + 1) {
-            POINT p = {key.r, key.c + 1};
+        // left
+        if (0 < key.c) {
+            POINT p = {key.r, key.c - 1};
             if (0 < img[p.r * cols + p.c]) {
                 if (visited.end() == visited.find(p)) {
                     Q.push_back(p);
-                    visited.add(p);
+                    visited.insert(p);
                     
                     if (left > p.c)
                         left = p.c;
@@ -86,13 +87,45 @@ void get_rectangle(const double* img, int rows, int cols, int start_r, int start
             }
         } 
 
+        // right
+        if (cols > key.c + 1) {
+            POINT p = {key.r, key.c + 1};
+            if (0 < img[p.r * cols + p.c]) {
+                if (visited.end() == visited.find(p)) {
+                    Q.push_back(p);
+                    visited.insert(p);
+                    
+                    if (left > p.c)
+                        left = p.c;
+                    if (right < p.c)
+                        right = p.c;
+                }
+            }
+        } 
+
+        // top
+        if (0 < key.r) {
+            POINT p = {key.r - 1, key.c};
+            if (0 < img[p.r * cols + p.c]) {
+                if (visited.end() == visited.find(p)) {
+                    Q.push_back(p);
+                    visited.insert(p);
+                    
+                    if (top > p.r)
+                        top = p.r;
+                    if (bottom < p.r)
+                        bottom = p.r;
+                }
+            }
+        }
+   
         // bottom
         if (rows > key.r + 1) {
             POINT p = {key.r + 1, key.c};
             if (0 < img[p.r * cols + p.c]) {
                 if (visited.end() == visited.find(p)) {
                     Q.push_back(p);
-                    visited.add(p);
+                    visited.insert(p);
                     
                     if (top > p.r)
                         top = p.r;
@@ -274,9 +307,8 @@ extern "C" {
     }
 
 
-    void get_rectangles(const double* img, int rows, int cols, RECT** handle, int* size) {
-        set<POINT> visited;
-        visited.reserve(100000);
+    void rects_detect(const double* img, int rows, int cols, void** handle, int* size) {
+        set<POINT, POINT::cmp> visited;
 
         vector<RECT> rects;
         rects.reserve(1000);
@@ -291,7 +323,7 @@ extern "C" {
                     continue;
 
                 int top, bottom, left, right;
-                get_rectangle(img, rows, cols, r, c, visited, top, bottom, left, right);
+                detect_rectangle(img, rows, cols, r, c, visited, top, bottom, left, right);
                
                 RECT rect = {top, bottom, left, right};
                 rects.push_back(rect); 
@@ -319,8 +351,21 @@ extern "C" {
         }
     }
 
+    void rects_fetch(const RECT* handle, int size, int* dest) {
+        for (int r = 0; r < size; ++r) {
+            dest[r * 4 + 0] = handle[r].top;
+            dest[r * 4 + 1] = handle[r].bottom;
+            dest[r * 4 + 2] = handle[r].left;
+            dest[r * 4 + 3] = handle[r].right;
+        }
+    }
+
+    void rects_free(const RECT* handle) {
+        delete [] handle;
+    }
 
 }
+
 
 
 

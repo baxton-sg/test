@@ -5,7 +5,7 @@ import sys
 import ctypes
 import numpy as np
 
-UTILS_DLL = ctypes.cdll.LoadLibrary("utils2.dll")
+UTILS_DLL = ctypes.cdll.LoadLibrary("utils.dll")
 
 
 
@@ -84,6 +84,39 @@ class UTILS(object):
         return new_freq
 
 
+    def get_rectangles(self, freq):
+        tmp = freq
+        if freq.dtype != np.float64:
+            tmp = tmp.astype(np.float64)
+
+        rows = freq.shape[0]
+        cols = freq.shape[1]
+
+        handle = ctypes.c_void_p(0)
+        rects_num = ctypes.c_int(0)
+
+        UTILS_DLL.rects_detect(ctypes.c_void_p(tmp.ctypes.data),
+                               ctypes.c_int(rows),
+                               ctypes.c_int(cols),
+                               ctypes.c_void_p(ctypes.addressof(handle)),
+                               ctypes.c_void_p(ctypes.addressof(rects_num)))
+
+        rects = []
+
+        if 0 == rects_num.value:
+            return rects
+
+        tmp = np.zeros((rects_num.value * 4, ), dtype=np.int32)
+
+        UTILS_DLL.rects_fetch(handle, 
+                              rects_num,
+                              ctypes.c_void_p(tmp.ctypes.data))
+        UTILS_DLL.rects_free(handle)
+
+        for r in range(rects_num.value):
+            rects.append((tmp[r * 4 + 0], tmp[r * 4 + 1], tmp[r * 4 + 2], tmp[r * 4 + 3], 0))
+
+        return rects
 
 
 

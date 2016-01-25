@@ -364,6 +364,72 @@ extern "C" {
         delete [] handle;
     }
 
+
+
+    void img_resize(const double* src, int rows, int cols, double* dst, int dst_rows, int dst_cols) {
+        int dst_vert_count = rows;
+        int dst_horz_count = cols;
+
+        int src_vert_count = dst_rows;
+        int src_horz_count = dst_cols;
+
+        int dst_r = 0;
+        int dst_c = 0;
+
+        int src_r = 0;
+        int src_c = 0;
+
+
+        int src_total = rows * cols;
+        int dst_total = dst_rows * dst_cols;
+
+
+        while ( (dst_r * dst_cols + dst_c) < dst_total && (src_r * cols + src_c) < src_total) {
+            // hors
+            if (src_horz_count >= dst_horz_count) {
+                dst[dst_r * dst_cols + dst_c] += dst_horz_count * src[src_r * cols + src_c];
+                src_horz_count -= dst_horz_count;
+                dst_horz_count = 0;
+            }
+            else {
+                dst[dst_r * dst_cols + dst_c] += src_horz_count * src[src_r * cols + src_c];
+                src_horz_count = 0;
+                dst_horz_count -= src_horz_count;
+            }
+
+            if (0 == src_horz_count && 0 == dst_horz_count) {
+                src_c = (src_c + 1) < cols ? src_c + 1 : 0;
+                src_r += src_c == 0 ? 1 : 0;
+
+                dst_c = (dst_c + 1) < dst_cols ? dst_c + 1 : 0;
+                dst_r += dst_c == 0 ? 1 : 0;
+
+                src_horz_count = dst_cols;
+                dst_horz_count = cols;
+            }
+            else if (0 == src_horz_count) {
+                src_c = (src_c + 1) < cols ? src_c + 1 : 0;
+                src_r += src_c == 0 ? 1 : 0;
+ 
+                src_horz_count = dst_cols;
+            }
+            else if (0 == dst_horz_count) {
+                dst_c = (dst_c + 1) < dst_cols ? dst_c + 1 : 0;
+                dst_r += dst_c == 0 ? 1 : 0;
+ 
+                dst_horz_count = cols;
+            }
+
+            // vert
+
+        }
+
+        for (int i = 0; i < dst_total; ++i) {
+            //dst[i] /= src_total;
+            dst[i] /= cols;
+        }
+    }
+
 }
 
 

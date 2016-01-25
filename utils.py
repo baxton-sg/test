@@ -120,6 +120,17 @@ class UTILS(object):
 
 
 
+    def img_resize(self, img, new_rows, new_cols):
+        new_img = np.zeros((new_rows, new_cols), dtype=np.float64)
+        UTILS_DLL.img_resize(ctypes.c_void_p(img.ctypes.data),
+                             ctypes.c_int(img.shape[0]),
+                             ctypes.c_int(img.shape[1]),
+                             ctypes.c_void_p(new_img.ctypes.data),
+                             ctypes.c_int(new_rows),
+                             ctypes.c_int(new_cols))
+        return new_img
+
+
 
 
 
@@ -143,6 +154,8 @@ def main():
 
     print mv.value, skew.value, var.value, kur.value
     print np.mean(buffer), stats.skew(buffer.flatten()), np.var(buffer), stats.kurtosis(buffer.flatten())
+
+    ###
 
 
 

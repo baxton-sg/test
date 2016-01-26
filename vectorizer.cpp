@@ -386,47 +386,63 @@ extern "C" {
 
         while ( (dst_r * dst_cols + dst_c) < dst_total && (src_r * cols + src_c) < src_total) {
             // hors
-            if (src_horz_count >= dst_horz_count) {
-                dst[dst_r * dst_cols + dst_c] += dst_horz_count * src[src_r * cols + src_c];
+            if (src_horz_count >= dst_horz_count && src_vert_count >= dst_vert_count) {
+                dst[dst_r * dst_cols + dst_c] += dst_horz_count * dst_vert_count * src[src_r * cols + src_c];
                 src_horz_count -= dst_horz_count;
                 dst_horz_count = 0;
             }
-            else {
-                dst[dst_r * dst_cols + dst_c] += src_horz_count * src[src_r * cols + src_c];
-                src_horz_count = 0;
+            else if (src_horz_count >= dst_horz_count && src_vert_count < dst_vert_count) {
+                dst[dst_r * dst_cols + dst_c] += dst_horz_count * src_vert_count * src[src_r * cols + src_c];
+                src_horz_count -= dst_horz_count;
+                dst_horz_count = 0;
+            }
+            else if (src_horz_count < dst_horz_count && src_vert_count >= dst_vert_count) {
+                dst[dst_r * dst_cols + dst_c] += src_horz_count * dst_vert_count * src[src_r * cols + src_c];
                 dst_horz_count -= src_horz_count;
+                src_horz_count = 0;
+            }
+            else {
+                dst[dst_r * dst_cols + dst_c] += src_horz_count * src_vert_count * src[src_r * cols + src_c];
+                dst_horz_count -= src_horz_count;
+                src_horz_count = 0;
             }
 
             if (0 == src_horz_count && 0 == dst_horz_count) {
                 src_c = (src_c + 1) < cols ? src_c + 1 : 0;
-                src_r += src_c == 0 ? 1 : 0;
-
                 dst_c = (dst_c + 1) < dst_cols ? dst_c + 1 : 0;
-                dst_r += dst_c == 0 ? 1 : 0;
 
                 src_horz_count = dst_cols;
                 dst_horz_count = cols;
+
+                if (src_c == 0 && dst_c == 0) {
+                    if (src_vert_count >= dst_vert_count) {
+                        src_vert_count -= dst_vert_count;
+                        if (0 == src_vert_count) {
+                            src_vert_count = dst_rows;
+                            src_r += 1;
+                        }
+                        dst_vert_count = rows;
+                        dst_r += 1;
+                    }
+                    else {
+                        dst_vert_count -= src_vert_count;
+                        src_vert_count = dst_rows;
+                        src_r += 1;
+                    }
+                }
             }
             else if (0 == src_horz_count) {
-                src_c = (src_c + 1) < cols ? src_c + 1 : 0;
-                src_r += src_c == 0 ? 1 : 0;
- 
+                src_c += 1;
                 src_horz_count = dst_cols;
             }
             else if (0 == dst_horz_count) {
-                dst_c = (dst_c + 1) < dst_cols ? dst_c + 1 : 0;
-                dst_r += dst_c == 0 ? 1 : 0;
- 
+                dst_c += 1;
                 dst_horz_count = cols;
             }
-
-            // vert
-
         }
 
         for (int i = 0; i < dst_total; ++i) {
-            //dst[i] /= src_total;
-            dst[i] /= cols;
+            dst[i] /= src_total;
         }
     }
 

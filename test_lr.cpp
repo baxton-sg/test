@@ -14,10 +14,10 @@ COLS = 28
 F = 2
 S = 2
 
-EPOCHES = 600
+EPOCHES = 1000
 A=.008
 
-chanks_num = 10
+chanks_num = 20
 
 
 def max_pool(buffer, F, S):
@@ -114,7 +114,7 @@ def prepare_data(F, S, meta, case_scan_id_map, systole, diastole):
                 counts[chank] -= 1
 
                 data[chank][rows_num[chank], :-20] = vec.reshape((columns-20,))
-                data[chank][rows_num[chank], -20:] = meta[case_scan_id_map[(ID, scan)]].copy()
+                #data[chank][rows_num[chank], -20:] = meta[case_scan_id_map[(ID, scan)]].copy()
                 rows_num[chank] += 1
                  
           
@@ -123,7 +123,7 @@ def prepare_data(F, S, meta, case_scan_id_map, systole, diastole):
                 idx_train += 1
             else:
                 data_test[idx_test, :-20] = vec.reshape((columns-20,))
-                data_test[idx_test, -20:] = meta[case_scan_id_map[(ID, scan)]].copy()
+                #data_test[idx_test, -20:] = meta[case_scan_id_map[(ID, scan)]].copy()
                 YStest[idx_test] = systole[ID-1]
                 YDtest[idx_test] = diastole[ID-1]
                 idx_test += 1
@@ -156,28 +156,22 @@ def main():
 
     #
     #
-    min1 = data[0].min(axis=0)
-    min2 = data[1].min(axis=0)
-    min3 = data[2].min(axis=0)
-    min4 = data[3].min(axis=0)
-    min = np.vstack((min1, min2, min3, min4)).min(axis=0)
-    
-    max1 = data[0].max(axis=0)
-    max2 = data[1].max(axis=0)
-    max3 = data[2].max(axis=0)
-    max4 = data[3].max(axis=0)
-    max = np.vstack((max1, max2, max3, max4)).max(axis=0)
+    mins = []
+    for ch in range(chanks_num):
+        mins.append(data[ch].min(axis=0))
+    min = np.vstack(mins).min(axis=0)
+   
+    maxs = []
+    for ch in range(chanks_num): 
+        maxs.append(data[ch].max(axis=0))
+    max = np.vstack(maxs).max(axis=0)
     
     r = max - min
     r[r==0] = 0.00001
-    data[0] -= min
-    data[0] /= r
-    data[1] -= min
-    data[1] /= r
-    data[2] -= min
-    data[2] /= r
-    data[3] -= min
-    data[3] /= r
+
+    for ch in range(chanks_num):
+        data[ch] -= min
+        data[ch] /= r
 
 
     data_test -= min

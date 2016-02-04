@@ -19,6 +19,15 @@ from sklearn.ensemble import RandomForestRegressor
 utils = UTILS()
 
 
+Y1 = int(sys.argv[2])
+Y2 = int(sys.argv[3])
+
+
+AGE_IDX = 0
+GENDER_IDX = 0
+POSITIONS_IDX = 0
+
+
 
 def get_N(base_path):
     N = 0
@@ -41,12 +50,23 @@ def get_minimax():
     return minimax
 
 
+def img_norm(img):
+    m = img.min()
+    r = img.max() - m
+    img -= m
+    img /= r
+#    img *= 255.
+
+
+def filter_data(data, indices):
+    return data[indices]
+
 
 
 def get_data(systole, diastole, minimax, base_path, meta, case_scan_id_map):
     keys = minimax.keys()
     N = len(keys)
-    to_train = int(N * .8)
+    to_train = int(N * .7)
     indices = range(N)
     np.random.shuffle(indices)
     indices_train = set(indices[:to_train])
@@ -59,30 +79,30 @@ def get_data(systole, diastole, minimax, base_path, meta, case_scan_id_map):
     S = 2
 
 
-    ROWS = 300
-    COLS = 300
+    ROWS = 400
+    COLS = 400
 
     R = 60
     C = 60
 
 
-    FLIP_NUM = 1
+    META_SIZE = 5 + 3 + 6
+    meta_indices = [4,5,6,7,10] + [11,12,13] + [14,15,16,17,18,19]
 
-    META_SIZE = 0
-    meta_indices = [4,5,6,7]
+    global GENDER_IDX, AGE_IDX, POSITIONS_IDX
+    GENDER_IDX = R * C + 2
+    AGE_IDX = R * C + 3
 
-    data = np.zeros((to_train * FLIP_NUM, R * C + META_SIZE), dtype=np.float64)
+    data = np.zeros((to_train, R * C + META_SIZE), dtype=np.float64)
     data_test = np.zeros((N - to_train, R * C + META_SIZE), dtype=np.float64)
 
-    YStrain = np.zeros((to_train * FLIP_NUM,), dtype=np.float64)
+    YStrain = np.zeros((to_train,), dtype=np.float64)
     YStest = np.zeros((N - to_train,), dtype=np.float64)
-    YDtrain = np.zeros((to_train * FLIP_NUM,), dtype=np.float64)
+    YDtrain = np.zeros((to_train,), dtype=np.float64)
     YDtest = np.zeros((N - to_train,), dtype=np.float64)
 
     idx = 0
     idx_test = 0
-
-    frame = np.zeros((ROWS, COLS), dtype=np.float64)
 
 
     ttt = 0
@@ -94,11 +114,22 @@ def get_data(systole, diastole, minimax, base_path, meta, case_scan_id_map):
         orig_img = spm.imread(os.path.join(base_path, str(key[0]), "study", key[1], minimax[key][0]))
         orig_img = orig_img.astype(np.float64)
 
+        orig_img2 = spm.imread(os.path.join(base_path, str(key[0]), "study", key[1], minimax[key][1]))
+        orig_img2 = orig_img2.astype(np.float64)
 
-        frame.fill(0)
-        frame[:orig_img.shape[0], :orig_img.shape[1]] = orig_img
-        #img = utils.filter(frame, F, S, 0)
-        img = frame
+        img_norm(orig_img)
+        img_norm(orig_img2)
+
+        #orig_img = np.abs(orig_img2 - orig_img)
+
+#        if ttt == 0:
+#            ttt = 1
+#            plt.clf()
+#            plt.imshow(orig_img)
+#            plt.show()
+
+
+        img = orig_img
         img = utils.img_resize(img, R, C)
 
 
@@ -106,63 +137,46 @@ def get_data(systole, diastole, minimax, base_path, meta, case_scan_id_map):
             if META_SIZE:
                 data[idx,:-META_SIZE] = img.flatten()
                 data[idx,-META_SIZE:] = meta[case_scan_id_map[key]][meta_indices]
+                #data[idx,-META_SIZE:] = orig_img.shape + orig_img.shape
             else:
-                if ttt < 10:
-                    ttt += 1
-                    plt.clf()
-                    plt.imshow(img)
-                    plt.show()
+#                if ttt < 10:
+#                    ttt += 1
+#                    plt.clf()
+#                    plt.imshow(img)
+#                    plt.show()
                 data[idx] = img.flatten()
  
-            YStrain[idx] = systole[key[0]]
-            YDtrain[idx] = diastole[key[0]]
+            YStrain[idx] = systole[key[0]-1]
+            YDtrain[idx] = diastole[key[0]-1]
             idx += 1
 
-            if FLIP_NUM > 1:
-                if META_SIZE:
-                    data[idx,-META_SIZE:] = meta[case_scan_id_map[key]][meta_indices] 
-                else:
-                    frame.fill(0)
-                    frame[:orig_img.shape[0], :orig_img.shape[1]] = orig_img[::-1,:]
-                    img = frame
-                    img = utils.img_resize(img, R, C)
-
-                    data[idx] = img.flatten()
-#                    tmp = np.zeros(img.shape)
-#                    D = np.random.randint(4)
-#                    if D == 0:   # up
-#                        tmp[:-SHIFT,:] = img[SHIFT:,:]
-#                    elif D == 1:   # up
-#                        tmp[SHIFT:,:] = img[:-SHIFT,:]
-#                    elif D == 2:   # up
-#                        tmp[:,:-SHIFT] = img[:,SHIFT:]
-#                    elif D == 3:   # up
-#                        tmp[:,SHIFT:] = img[:,:-SHIFT]
-#                    data[idx] = tmp.flatten()
-
-
-                YStrain[idx] = systole[key[0]]
-                YDtrain[idx] = diastole[key[0]]
-                idx += 1
         else:
             if META_SIZE:
                 data_test[idx_test,-META_SIZE:] = meta[case_scan_id_map[key]][meta_indices]
+                #data_test[idx_test,-META_SIZE:] = orig_img.shape + orig_img.shape
                 data_test[idx_test,:-META_SIZE] = img.flatten()
             else:
                 data_test[idx_test] = img.flatten()
 
-            YStest[idx_test] = systole[key[0]]
-            YDtest[idx_test] = diastole[key[0]]
+            YStest[idx_test] = systole[key[0]-1]
+            YDtest[idx_test] = diastole[key[0]-1]
             idx_test += 1
 
-    if META_SIZE:
-        min = data[:,-META_SIZE:].min(axis=0)
-        max = data[:,-META_SIZE:].max(axis=0)
-        r = max - min
-        r[r==0] = 0.00001
+    #if META_SIZE:
+        #min = data[:,-META_SIZE:].min(axis=0)
+        #max = data[:,-META_SIZE:].max(axis=0)
+        #r = max - min
+
+        #data[:,-META_SIZE:][r == 0] = 0
+        #data_test[:,-META_SIZE:][r == 0] = 0
+
+        #r[r==0] = 0.00001
+
+        #r = 1000
   
-        data[:,-META_SIZE:] /= r
-        data_test[:,-META_SIZE:] /= r
+        #data[:,-META_SIZE:] /= r
+        #data_test[:,-META_SIZE:] /= r
+
     
     return data, data_test, YStrain, YStest, YDtrain, YDtest
 
@@ -174,7 +188,7 @@ def get_data(systole, diastole, minimax, base_path, meta, case_scan_id_map):
 def main():
     np.random.seed()
 
-    base_path = PATH_TRAIN_H2
+    base_path = PATH_TRAIN_H
 
     N = get_N(base_path)
     print N
@@ -188,46 +202,67 @@ def main():
 
     data, data_test, YStrain, YStest, YDtrain, YDtest = get_data(systole, diastole, minimax, base_path, meta, case_scan_id_map)
 
-    min = data.min(axis=0)
-    max = data.max(axis=0)
+    ii = (12*Y1 < data[:,AGE_IDX]) & (data[:,AGE_IDX] <= 12*Y2) 
+    print ii.shape
+    data = filter_data(data, ii)
+    print data.shape
+    YStrain = filter_data(YStrain, ii)
+    YDtrain = filter_data(YDtrain, ii)
+
+    data[:,GENDER_IDX][data[:,GENDER_IDX] != 1.] = -1.
+    min = data[:,AGE_IDX+1:].min(axis=0)
+    max = data[:,AGE_IDX+1:].max(axis=0)
     r = max - min
+    data[:,AGE_IDX+1:][:,r==0] = 0
     r[r==0] = 0.00001
+    data[:,AGE_IDX+1:] /= r
 
-    data /= r
-    data_test /= r
 
-    print data[:5,:20]
-    print YStrain[:10]
+
+    ii = ((12*Y1) < data_test[:,AGE_IDX]) & (data_test[:,AGE_IDX] <= (12*Y2)) 
+    data_test = data_test[ii]
+    YStest = YStest[ii]
+    YDtest = YDtest[ii]
+    data_test[:,GENDER_IDX][data_test[:,GENDER_IDX] != 1.] = -1.
+    data_test[:,AGE_IDX+1:][:,r==0.00001] = 0
+    data_test[:,AGE_IDX+1:] /= r
+
+    print data[:5,:]
+    print YStrain[:]
 
     YStrain /= 610
     YStest /= 610
 
+    print data.shape
+    print data_test.shape
 
     if "RF" != sys.argv[1]:
-        EPOCHES = 250
-        A = .008
+        EPOCHES = 3000
+        A = .02
 
-        ss = [data.shape[1], 152, 1]
-        ss2 = [data.shape[1], 132, 32, 1]
+        ss = [data.shape[1], 32, 1]
         ann = ANN(ss, 0)
-        ann2 = ANN(ss2, 0)
 
-        YStrain2 = 1. - YStrain
+#        ww, bb = ann.get_weights()
+#        np.random.seed()
+#        ww = np.random.rand(ww.shape[0])
+#        bb = np.random.rand(bb.shape[0])
+#        ann.set_weights(ww, bb)
+
+        
 
         for e in range(EPOCHES):
-            ann.partial_fit(data, YStrain, A=A)
-            ann2.partial_fit(data, YStrain2, A=A)
-            print e, ann.cost.value, ann2.cost.value
+            ann.partial_fit(data, YStrain, n_iter=1, A=A)
+            print e, ann.cost.value    #, ann2.cost.value
 
     else:
-        ann = RandomForestRegressor(n_estimators=100)
+        ann = RandomForestRegressor(n_estimators=500)
         ann.fit(data, YStrain)
    
 
     # testing
     if "RF" != sys.argv[1]:
         predictions = ann.predict_proba(data_test) 
-        predictions2 = ann2.predict_proba(data_test) 
     else:
         predictions = ann.predict(data_test)
  
@@ -237,8 +272,6 @@ def main():
     for i in range(predictions.shape[0]):
         if "RF" != sys.argv[1]:
             P = predictions[i,1]
-            P2 = predictions2[i,1]
-            P -= (1. - (P + P2))
         else:
             P = predictions[i]
 
@@ -247,6 +280,9 @@ def main():
         E += np.abs(P - YStest[i])
     E = E/YStest.shape[0]
     print "ERROR", E, "(%f)" % (E*610)
+
+    print data.shape, data_test.shape
+
     
 
 
@@ -255,3 +291,4 @@ def main():
 
 if __name__ == "__main__":
     main() 
+
